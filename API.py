@@ -5,8 +5,12 @@ import time
 import numpy as np
 import cv2 as cv
 import exifread
+from flask_cors import CORS
+import datetime
 
 app = Flask(__name__)
+CORS(app)
+
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -38,63 +42,74 @@ def process_image():
         return jsonify({'error': 'Both files must be selected.'}), 400
 
     timestamp = str(int(time.time()))
-    original_filename = f"original_{timestamp}.jpg"
-    processed_filename = f"processed_{timestamp}.jpg"
-    hsv_awal_filename = f"hsv_awal_{timestamp}.jpg"
-    hsv_akhir_filename = f"hsv_akhir_{timestamp}.jpg"
-    sample_filename = f"sample_{timestamp}.jpg"
+    base_filename = f"{timestamp}"
+    original_filename = f"original_{base_filename}.jpg"
+    sample_filename = f"sample_{base_filename}.jpg"
+    hsv_awal_filename = f"HSV-awal_{base_filename}.jpg"
+    hsv_hasil_filename = f"HSV-hasil_{base_filename}.jpg"
+    hasil_jpg_filename = f"hasil-JPG_{base_filename}.jpg"
 
     # Simpan file
     original_path = os.path.join(app.config['UPLOAD_FOLDER'], original_filename)
-    processed_path = os.path.join(app.config['UPLOAD_FOLDER'], processed_filename)
-    hsv_awal_path = os.path.join(app.config['UPLOAD_FOLDER'], hsv_awal_filename)
-    hsv_akhir_path = os.path.join(app.config['UPLOAD_FOLDER'], hsv_akhir_filename)
     sample_path = os.path.join(app.config['UPLOAD_FOLDER'], sample_filename)
+    hsv_awal_path = os.path.join(app.config['UPLOAD_FOLDER'], hsv_awal_filename)
+    hsv_hasil_path = os.path.join(app.config['UPLOAD_FOLDER'], hsv_hasil_filename)
+    hasil_jpg_path = os.path.join(app.config['UPLOAD_FOLDER'], hasil_jpg_filename)
 
     image_file.save(original_path)
     sample_file.save(sample_path)
 
-    # Baca sample dan konversi ke HSV
-    sample_hsv = cv.cvtColor(np.asarray(Image.open(sample_path)), cv.COLOR_BGR2HSV_FULL)
-    target_hsv = cv.cvtColor(np.asarray(Image.open(original_path)), cv.COLOR_BGR2HSV_FULL)
+    # Mulai pengukuran waktu proses
+    start_time = datetime.datetime.now()
 
-    # Threshold dari sample
-    hmax = np.average(sample_hsv[:, :, 0]) + 2 * np.std(sample_hsv[:, :, 0])
-    hmin = np.average(sample_hsv[:, :, 0]) - 2 * np.std(sample_hsv[:, :, 0])
-    smax = np.average(sample_hsv[:, :, 1]) + 2 * np.std(sample_hsv[:, :, 1])
-    smin = np.average(sample_hsv[:, :, 1]) - 2 * np.std(sample_hsv[:, :, 1])
-    vmax = np.average(sample_hsv[:, :, 2]) + 5 * np.std(sample_hsv[:, :, 2])
-    vmin = np.average(sample_hsv[:, :, 2]) - 5 * np.std(sample_hsv[:, :, 2])
+    # Proses sample (ambil threshold HSV dari sample)
+    gbSRGB = np.asarray(Image.open(sample_path))
+    gbSHSV = cv.cvtColor(gbSRGB, cv.COLOR_BGR2HSV_FULL)
 
-    # Masking
-    h = np.logical_and(target_hsv[:, :, 0] >= hmin, target_hsv[:, :, 0] <= hmax)
-    s = np.logical_and(target_hsv[:, :, 1] >= smin, target_hsv[:, :, 1] <= smax)
-    v = np.logical_and(target_hsv[:, :, 2] >= vmin, target_hsv[:, :, 2] <= vmax)
+    gbRGB = np.asarray(Image.open(original_path))
+    gbHSV = cv.cvtColor(gbRGB, cv.COLOR_BGR2HSV_FULL)
+
+    # Ambil threshold sesuai kode Jupyter
+    hmax = np.average(gbSHSV[:, :, 0]) + 2 * np.std(gbSHSV[:, :, 0])
+    hmin = np.average(gbSHSV[:, :, 0]) - 2 * np.std(gbSHSV[:, :, 0])
+    smax = np.average(gbSHSV[:, :, 1]) + 2 * np.std(gbSHSV[:, :, 1])
+    smin = np.average(gbSHSV[:, :, 1]) - 2 * np.std(gbSHSV[:, :, 1])
+    vmax = np.average(gbSHSV[:, :, 2]) + 5 * np.std(gbSHSV[:, :, 2])
+    vmin = np.average(gbSHSV[:, :, 2]) - 5 * np.std(gbSHSV[:, :, 2])
+
+    # Masking sesuai operator di kode Jupyter
+    h = np.logical_and(gbHSV[:, :, 0] >= hmin, gbHSV[:, :, 0] <= hmax)
+    s = np.logical_and(gbHSV[:, :, 1] > smin, gbHSV[:, :, 1] < smax)
+    v = np.logical_and(gbHSV[:, :, 2] > vmin, gbHSV[:, :, 2] < vmax)
     mask = np.logical_and(h, np.logical_and(s, v))
 
-    hasil_hsv = np.zeros_like(target_hsv)
-    hasil_hsv[:, :, 0] = np.where(mask, target_hsv[:, :, 0], 0)
-    hasil_hsv[:, :, 1] = np.where(mask, target_hsv[:, :, 1], 0)
-    hasil_hsv[:, :, 2] = np.where(mask, target_hsv[:, :, 2], 0)
+    # Buat array hasil dengan tipe uint8
+    gbHasil = np.zeros(gbHSV.shape, dtype=np.uint8)
+    gbHasil[:, :, 0] = np.where(mask, gbHSV[:, :, 0], 0)
+    gbHasil[:, :, 1] = np.where(mask, gbHSV[:, :, 1], 0)
+    gbHasil[:, :, 2] = np.where(mask, gbHSV[:, :, 2], 0)
 
-    # Simpan hasil
-    processed_rgb = cv.cvtColor(hasil_hsv, cv.COLOR_HSV2RGB_FULL)
-    hsv_awal_rgb = cv.cvtColor(target_hsv, cv.COLOR_HSV2RGB_FULL)
-    hsv_akhir_rgb = cv.cvtColor(hasil_hsv, cv.COLOR_HSV2RGB_FULL)
+    # Convert hasil ke RGB
+    hasilJPG = cv.cvtColor(gbHasil, cv.COLOR_HSV2RGB_FULL)
 
-    cv.imwrite(processed_path, processed_rgb)
-    cv.imwrite(hsv_awal_path, hsv_awal_rgb)
-    cv.imwrite(hsv_akhir_path, hsv_akhir_rgb)
+
+    # Selesai proses
+    end_time = datetime.datetime.now()
+    HGSVtime = (end_time - start_time).total_seconds()
 
     altitude = baca_exif_altitude(original_path)
 
     return jsonify({
         'original_image': f"/static/uploads/{original_filename}",
         'sample_image': f"/static/uploads/{sample_filename}",
-        'processed_image': f"/static/uploads/{processed_filename}",
         'hsv_awal_image': f"/static/uploads/{hsv_awal_filename}",
-        'hsv_akhir_image': f"/static/uploads/{hsv_akhir_filename}",
-        'altitude': altitude
+        'hsv_hasil_image': f"/static/uploads/{hsv_hasil_filename}",
+        'hasil_jpg_image': f"/static/uploads/{hasil_jpg_filename}",
+        'altitude': altitude,
+        'processing_time_seconds': HGSVtime,
+        'H_threshold': {'min': float(hmin), 'max': float(hmax)},
+        'S_threshold': {'min': float(smin), 'max': float(smax)},
+        'V_threshold': {'min': float(vmin), 'max': float(vmax)},
     })
 
 if __name__ == '__main__':
